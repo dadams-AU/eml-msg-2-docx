@@ -176,48 +176,145 @@ def process_one_uploaded(uploaded_file, want_docx, want_pdf, pdf_engine):
         shutil.rmtree(work, ignore_errors=True)
 
 # ---------------- UI ----------------
-st.set_page_config(page_title="EML/MSG → DOCX/PDF", page_icon="📨", layout="centered")
-st.title("📨 EML/MSG → DOCX/PDF")
+st.set_page_config(page_title="Email → Document Converter", page_icon="📨", layout="wide")
 
-pandoc_ok = have_prog("pandoc")
-if not pandoc_ok:
-    st.error("Pandoc not found. On Streamlit Cloud, add it to packages.txt. Locally, install via your package manager.")
-if not HAS_EXTRACT_MSG:
-    st.warning("`.msg` support not installed. Add the extract-msg stack to requirements.txt.")
+st.markdown("""
+<style>
+  /* tighten the sidebar */
+  section[data-testid="stSidebar"] { min-width: 260px; }
+  /* status badge pill */
+  .status-ok   { background:#d4edda; color:#155724; padding:2px 10px; border-radius:12px; font-size:.85rem; }
+  .status-warn { background:#fff3cd; color:#856404; padding:2px 10px; border-radius:12px; font-size:.85rem; }
+  .status-err  { background:#f8d7da; color:#721c24; padding:2px 10px; border-radius:12px; font-size:.85rem; }
+  /* file list rows */
+  .file-row { padding:6px 10px; border-radius:6px; margin-bottom:4px; background:#f8f9fa; font-size:.9rem; }
+  /* download section header */
+  .dl-header { font-size:1.1rem; font-weight:600; margin-bottom:8px; }
+</style>
+""", unsafe_allow_html=True)
 
-c1, c2, c3 = st.columns(3)
-with c1: want_docx = st.checkbox("Generate DOCX", value=True)
-with c2: want_pdf  = st.checkbox("Generate PDF", value=False)
-with c3:
-    engine_choice = st.selectbox("PDF engine", ["(default)", "wkhtmltopdf", "xelatex"], index=1)
+# ---- Sidebar ----
+with st.sidebar:
+    st.header("⚙️ Output Options")
+    want_docx = st.checkbox("Generate DOCX", value=True)
+    want_pdf  = st.checkbox("Generate PDF",  value=False)
+    if want_pdf:
+        engine_choice = st.selectbox(
+            "PDF engine",
+            ["(default)", "wkhtmltopdf", "xelatex"],
+            index=1,
+            help="wkhtmltopdf is recommended on Streamlit Cloud (smaller footprint than TeX).",
+        )
+    else:
+        engine_choice = "(default)"
+
+    st.divider()
+    st.subheader("System Status")
+    pandoc_ok = have_prog("pandoc")
+    if pandoc_ok:
+        st.markdown('<span class="status-ok">✔ Pandoc ready</span>', unsafe_allow_html=True)
+    else:
+        st.markdown('<span class="status-err">✘ Pandoc not found</span>', unsafe_allow_html=True)
+        st.caption("Add `pandoc` to `packages.txt` (Streamlit Cloud) or install via your package manager.")
+
+    st.write("")
+    if HAS_EXTRACT_MSG:
+        st.markdown('<span class="status-ok">✔ .msg support ready</span>', unsafe_allow_html=True)
+    else:
+        st.markdown('<span class="status-warn">⚠ .msg support missing</span>', unsafe_allow_html=True)
+        st.caption("Add the `extract-msg` stack to `requirements.txt` to enable `.msg` files.")
+
+    st.divider()
+    with st.expander("How it works"):
+        st.markdown(
+            "1. Upload one or more `.eml` / `.msg` files.\n"
+            "2. The app extracts HTML (or plain text) and any inline `cid:` images.\n"
+            "3. [Pandoc](https://pandoc.org) converts the result to DOCX and/or PDF.\n"
+            "4. Download individual files or grab them all in a ZIP."
+        )
+
 pdf_engine = None if engine_choice == "(default)" else engine_choice
 
-uploads = st.file_uploader("Drop .eml/.msg files (multiple allowed)", type=["eml", "msg"], accept_multiple_files=True)
+# ---- Main area ----
+st.title("📨 Email → Document Converter")
+st.caption("Convert `.eml` and `.msg` email files to DOCX or PDF — inline images included.")
 
-if st.button("Convert", disabled=not uploads or not pandoc_ok or (not want_docx and not want_pdf)):
-    results = []
+st.divider()
+
+uploads = st.file_uploader(
+    "Drop `.eml` / `.msg` files here (multiple allowed)",
+    type=["eml", "msg"],
+    accept_multiple_files=True,
+    label_visibility="visible",
+)
+
+if uploads:
+    st.markdown(f"**{len(uploads)} file{'s' if len(uploads) != 1 else ''} queued**")
+    for uf in uploads:
+        size_kb = len(uf.getbuffer()) / 1024
+        size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.2f} MB"
+        ext_icon = "📧" if uf.name.lower().endswith(".eml") else "📁"
+        st.markdown(
+            f'<div class="file-row">{ext_icon} <b>{uf.name}</b> &nbsp;·&nbsp; {size_str}</div>',
+            unsafe_allow_html=True,
+        )
+    st.write("")
+
+can_convert = bool(uploads) and pandoc_ok and (want_docx or want_pdf)
+if not want_docx and not want_pdf:
+    st.warning("Select at least one output format (DOCX or PDF) in the sidebar.")
+
+if st.button("Convert", type="primary", disabled=not can_convert, use_container_width=True):
+    results, errors = [], []
     zipper = io.BytesIO()
+    progress = st.progress(0, text="Starting…")
+
     with zipfile.ZipFile(zipper, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for uf in uploads:
+        for i, uf in enumerate(uploads):
+            progress.progress((i) / len(uploads), text=f"Converting **{uf.name}** ({i+1}/{len(uploads)})…")
             with st.status(f"Processing **{uf.name}**", expanded=False):
                 base, outputs, err = process_one_uploaded(uf, want_docx, want_pdf, pdf_engine)
             if err:
-                st.error(f"{uf.name}: {err}")
+                errors.append((uf.name, err))
                 continue
+
+            dl_cols = st.columns([1, 1, 2])
             if "docx" in outputs:
                 docx_name = f"{base}.docx"
-                st.download_button(f"⬇️ {docx_name}", outputs["docx"], docx_name,
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                dl_cols[0].download_button(
+                    "⬇️ DOCX", outputs["docx"], docx_name,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"docx_{i}",
+                )
                 zf.writestr(docx_name, outputs["docx"])
             if "pdf" in outputs:
                 pdf_name = f"{base}.pdf"
-                st.download_button(f"⬇️ {pdf_name}", outputs["pdf"], pdf_name, "application/pdf")
+                dl_cols[1].download_button(
+                    "⬇️ PDF", outputs["pdf"], pdf_name,
+                    "application/pdf",
+                    key=f"pdf_{i}",
+                )
                 zf.writestr(pdf_name, outputs["pdf"])
-            results.append(base)
-    if results:
-        zipper.seek(0)
-        st.download_button("⬇️ Download all as ZIP", zipper.getvalue(),
-                           "converted_emails.zip", "application/zip", use_container_width=True)
+            if outputs:
+                dl_cols[2].caption(f"✔ {uf.name}")
+                results.append(base)
 
-st.markdown("---")
-st.caption("Tip: On Streamlit Cloud, PDFs work best with `wkhtmltopdf` (smaller footprint than TeX).")
+    progress.progress(1.0, text="Done!")
+
+    for fname, err in errors:
+        st.error(f"**{fname}**: {err}")
+
+    if len(results) > 1:
+        zipper.seek(0)
+        st.divider()
+        st.download_button(
+            "⬇️ Download all as ZIP",
+            zipper.getvalue(),
+            "converted_emails.zip",
+            "application/zip",
+            use_container_width=True,
+            type="primary",
+        )
+
+    if results:
+        st.success(f"Converted {len(results)} file{'s' if len(results) != 1 else ''} successfully.")
