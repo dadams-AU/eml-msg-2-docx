@@ -201,9 +201,9 @@ with st.sidebar:
     if want_pdf:
         engine_choice = st.selectbox(
             "PDF engine",
-            ["(default)", "wkhtmltopdf", "xelatex"],
-            index=1,
-            help="wkhtmltopdf is recommended on Streamlit Cloud (smaller footprint than TeX).",
+            ["(default)", "xelatex", "weasyprint"],
+            index=0,
+            help="Uses pandoc's default engine unless overridden. xelatex requires a TeX installation; weasyprint requires `pip install weasyprint`.",
         )
     else:
         engine_choice = "(default)"
