@@ -1,8 +1,2 @@
 streamlit
 extract-msg
-olefile
-rtfde
-compressed-rtf
-tzlocal
-chardet
-beautifulsoup4
