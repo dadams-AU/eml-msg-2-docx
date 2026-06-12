@@ -201,9 +201,9 @@ with st.sidebar:
     if want_pdf:
         engine_choice = st.selectbox(
             "PDF engine",
-            ["(default)", "xelatex", "weasyprint"],
+            ["weasyprint", "(default)", "xelatex"],
             index=0,
-            help="Uses pandoc's default engine unless overridden. xelatex requires a TeX installation; weasyprint requires `pip install weasyprint`.",
+            help="weasyprint is recommended (installed). xelatex requires a TeX installation.",
         )
     else:
         engine_choice = "(default)"
